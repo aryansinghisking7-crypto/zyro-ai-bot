@@ -1,62 +1,83 @@
 import discord
 from discord.ext import commands
-import google.generativeai as genai
 import os
+import asyncio
+from groq import Groq, RateLimitError, APIError
 
+# Load keys from Railway Variables
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 
-if not DISCORD_TOKEN or not GEMINI_API_KEY:
-    print("ERROR: Missing DISCORD_TOKEN or GEMINI_API_KEY")
-    exit()
+# Safety check
+if not DISCORD_TOKEN or not GROQ_API_KEY:
+    raise ValueError("Missing DISCORD_TOKEN or GROQ_API_KEY in environment variables")
 
-genai.configure(api_key=GEMINI_API_KEY)
+# Init Groq client
+client = Groq(api_key=GROQ_API_KEY)
 
-# Auto-pick a working model instead of hardcoding
-def get_working_model():
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                if 'gemini-2.0-flash' in m.name:
-                    print(f"Using model: {m.name}")
-                    return genai.GenerativeModel(m.name)
-                if 'gemini-1.5-flash' in m.name:
-                    print(f"Using model: {m.name}")
-                    return genai.GenerativeModel(m.name)
-    except Exception as e:
-        print(f"Model listing failed: {e}")
-    # Fallback to most common working name
-    print("Using fallback: gemini-2.0-flash-exp")
-    return genai.GenerativeModel('gemini-2.0-flash-exp')
-
-model = get_working_model()
-
+# Bot setup
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user}')
-    print('ZYRO AI is online!')
+    print(f'✅ Logged in as {bot.user}')
+    print('ZYRO AI on Groq is online!')
+    await bot.change_presence(activity=discord.Game(name="Type!ask <question>"))
 
 @bot.command(name='ask')
-async def ask(ctx, *, question):
+@commands.cooldown(1, 3, commands.BucketType.user) # 1 use per 3 sec per user
+async def ask(ctx, *, question: str = None):
+    if question is None:
+        await ctx.send("Ask me something: `!ask what is AI?`")
+        return
+        
     try:
         async with ctx.typing():
-            response = model.generate_content(question)
-            text = response.text
+            # Groq call
+            chat = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "You are ZYRO AI, a helpful Discord bot. Keep replies concise and friendly."},
+                    {"role": "user", "content": question}
+                ],
+                model="llama-3.1-8b-instant", # Fast + free model
+                temperature=0.7,
+                max_tokens=800 # Prevent huge replies
+            )
             
-            # Handle Discord 2000 char limit
-            for chunk in [text[i:i+2000] for i in range(0, len(text), 2000)]:
-                await ctx.send(chunk)
+            text = chat.choices[0].message.content.strip()
+            
+            # Discord 2000 char limit fix
+            if len(text) > 2000:
+                chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
+                for chunk in chunks:
+                    await ctx.send(chunk)
+                    await asyncio.sleep(0.5) # Prevent rate limit
+            else:
+                await ctx.send(text)
                 
+    except RateLimitError:
+        await ctx.send("⚠️ I'm being rate limited by Groq. Try again in a few seconds.")
+    except APIError as e:
+        await ctx.send(f"🚫 Groq API error: `{str(e)}`")
     except Exception as e:
-        await ctx.send(f"Gemini error: {str(e)}")
-        print(f"Error: {e}")
+        await ctx.send(f"❌ Unexpected error: `{str(e)}`")
+        print(f"Error in!ask: {e}")
+
+@ask.error
+async def ask_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ Slow down! Try again in {error.retry_after:.1f}s")
 
 @bot.command(name='ping')
 async def ping(ctx):
-    await ctx.send(f'Pong! {round(bot.latency * 1000)}ms')
+    await ctx.send(f'🏓 Pong! `{round(bot.latency * 1000)}ms`')
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return # Ignore unknown commands
+    print(f"Command error: {error}")
 
 bot.run(DISCORD_TOKEN)
