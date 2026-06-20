@@ -43,26 +43,4 @@ async def on_ready():
 # --- /ask Command with Groq ---
 @bot.tree.command(name="ask", description="Ask AI Zyro anything - powered by Groq")
 @app_commands.describe(prompt="Your question for Zyro")
-async def ask(interaction: discord.Interaction, prompt: str):
-    await interaction.response.defer()
-
-    try:
-        chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are AI Zyro, a helpful, friendly Discord bot. Keep replies under 1800 characters. Use markdown formatting when helpful."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            model="llama-3.1-70b-versatile",
-            temperature=0.7,
-            max_tokens=800
-        )
-        response = chat_completion.choices[0].message.content
-
-    except Exception as e:
-        response = f"Groq API error: {e}\nCheck
+async def ask(interaction: discord.Interaction, prompt: str
